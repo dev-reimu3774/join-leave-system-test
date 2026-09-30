@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>QRコード入退室管理システム</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- jsQR Library for lightweight, bulletproof iOS QR decoding -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <!-- Google Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Essential for preventing iOS Safari native video player takeover */
+        #webcam {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+            border-radius: 1.25rem;
+            display: block;
+        }
+
+        /* Animated scanner laser */
+        @keyframes scanLaser {
+            0% { top: 10%; opacity: 0.3; }
+            50% { opacity: 1; }
+            100% { top: 90%; opacity: 0.3; }
+        }
+        .animate-laser {
+            position: absolute;
+            width: 80%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #6366f1, #a855f7, transparent);
+            box-shadow: 0 0 12px #818cf8;
+            animation: scanLaser 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
+
+    <header class="bg-indigo-600 text-white shadow-lg sticky top-0 z-30">
+        <div class="max-w-md mx-auto px-4 py-3.5 flex items-center justify-between">
+            <div class="flex items-center space-x-2.5">
+                <div class="bg-white/10 p-2 rounded-xl backdrop-blur-sm">
+                    <i class="fa-solid fa-qrcode text-xl text-indigo-200"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base tracking-tight leading-none">QR入退室管理</h1>
+                    <span id="header-status-badge" class="text-[10px] text-amber-200 font-medium">GAS未連携 (テストモード)</span>
+                </div>
+            </div>
+            <div class="flex items-center space-x-1.5">
+                <button id="btn-open-deploy-guide" class="p-2 rounded-xl hover:bg-white/10 transition active:scale-95 text-indigo-100 flex items-center text-xs space-x-1" title="Web公開ガイド">
+                    <i class="fa-solid fa-cloud-arrow-up text-sm"></i>
+                    <span class="hidden sm:inline">公開方法</span>
+                </button>
+                <button id="btn-open-settings" class="p-2 rounded-xl hover:bg-white/10 transition active:scale-95 text-indigo-100 relative" title="設定 (GAS連携)">
+                    <i class="fa-solid fa-gear text-lg"></i>
+                    <span id="settings-dot" class="absolute top-1.5 right-1.5 w-2 h-2 bg-amber-400 rounded-full animate-ping"></span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-md mx-auto w-full flex-grow p-4 space-y-4 flex flex-col justify-center">
+
+        <!-- Mode Toggle Segment (Check-in vs Check-out) -->
+        <div class="bg-slate-200/80 p-1.5 rounded-2xl flex text-center font-bold text-sm shadow-inner backdrop-blur-sm">
+            <button id="mode-in" class="flex-1 py-3.5 rounded-xl transition duration-200 flex items-center justify-center space-x-2 bg-emerald-600 text-white shadow-md active:scale-95">
+                <i class="fa-solid fa-right-to-bracket text-base"></i>
+                <span>入室 (Check-in)</span>
+            </button>
+            <button id="mode-out" class="flex-1 py-3.5 rounded-xl transition duration-200 flex items-center justify-center space-x-2 text-slate-600 hover:text-slate-800 active:scale-95">
+                <i class="fa-solid fa-right-from-bracket text-base"></i>
+                <span>退室 (Check-out)</span>
+            </button>
+        </div>
+
+        <!-- Camera Box Container -->
+        <div class="bg-white rounded-3xl p-4 shadow-xl border border-slate-200/60 flex flex-col items-center">
+            
+            <!-- Video Container (1:1 Aspect Ratio) -->
+            <div class="w-full relative rounded-2xl overflow-hidden bg-slate-900 aspect-square max-h-[360px] flex items-center justify-center shadow-inner">
+                
+                <!-- Native Video Tag with Inline Attributes specifically for iOS -->
+                <video id="webcam" playsinline webkit-playsinline muted autoplay class="hidden"></video>
+
+                <!-- Perfectly Centered Scan Reticle Overlay -->
+                <div id="scanner-guide" class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6 hidden z-10">
+                    <div class="animate-laser"></div>
+                    <div class="w-48 h-48 sm:w-56 sm:h-56 border-2 border-indigo-400/80 rounded-2xl relative shadow-[0_0_25px_rgba(99,102,241,0.35)]">
+                        <div class="absolute top-0 left-0 w-6 h-6 border-t-4 border-l-4 border-indigo-500 -mt-1 -ml-1 rounded-tl-lg"></div>
+                        <div class="absolute top-0 right-0 w-6 h-6 border-t-4 border-r-4 border-indigo-500 -mt-1 -mr-1 rounded-tr-lg"></div>
+                        <div class="absolute bottom-0 left-0 w-6 h-6 border-b-4 border-l-4 border-indigo-500 -mb-1 -ml-1 rounded-bl-lg"></div>
+                        <div class="absolute bottom-0 right-0 w-6 h-6 border-b-4 border-r-4 border-indigo-500 -mb-1 -mr-1 rounded-br-lg"></div>
+                        <!-- Crosshair center point -->
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <div class="w-2.5 h-2.5 bg-indigo-400/80 rounded-full ring-4 ring-indigo-400/20"></div>
+                        </div>
+                    </div>
+                    <p class="text-[11px] text-white/90 font-medium mt-4 bg-slate-900/80 px-3 py-1 rounded-full backdrop-blur-md shadow border border-white/10">
+                        枠内にQRコードを合わせてください
+                    </p>
+                </div>
+
+                <!-- Camera Idle Screen Placeholder -->
+                <div id="camera-placeholder" class="text-center p-6 space-y-4 z-20">
+                    <div class="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto text-2xl shadow-inner border border-indigo-100">
+                        <i class="fa-solid fa-camera"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm font-semibold text-slate-200">カメラが停止しています</p>
+                        <p class="text-xs text-slate-400 mt-0.5">「カメラ起動」を押してスキャンを開始します</p>
+                    </div>
+                    <button id="btn-toggle-camera" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl transition active:scale-95 shadow-lg shadow-indigo-500/30 text-xs flex items-center justify-center mx-auto space-x-2">
+                        <i class="fa-solid fa-play"></i>
+                        <span>カメラ起動</span>
+                    </button>
+                </div>
+
+            </div>
+
+            <!-- Manual Options and Photo Upload fallback -->
+            <div class="w-full flex justify-between items-center mt-3 pt-3 border-t border-slate-100 text-xs">
+                <span id="camera-status" class="text-slate-500 font-medium flex items-center">
+                    <span class="w-2 h-2 rounded-full bg-slate-300 mr-2"></span> カメラ停止中
+                </span>
+                
+                <div class="flex items-center space-x-3">
+                    <label class="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer flex items-center space-x-1">
+                        <i class="fa-solid fa-image"></i>
+                        <span>写真読み取り</span>
+                        <input type="file" id="qr-file-input" accept="image/*" class="hidden">
+                    </label>
+                    <button id="btn-manual-entry" class="text-indigo-600 hover:text-indigo-800 font-semibold hover:underline flex items-center space-x-1">
+                        <i class="fa-solid fa-keyboard"></i>
+                        <span>手動入力</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity Toast Preview Card -->
+        <div id="last-record-card" class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 hidden">
+            <div class="flex items-center justify-between text-xs text-slate-500 mb-1">
+                <span>直近の記録</span>
+                <span id="last-record-time" class="font-mono">--:--:--</span>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span id="last-record-badge" class="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-800">
+                    入室
+                </span>
+                <span id="last-record-user" class="font-bold text-slate-800 text-sm truncate">
+                    ---
+                </span>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Settings Modal -->
+    <div id="modal-settings" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b pb-3">
+                <h3 class="font-bold text-slate-800 text-base flex items-center">
+                    <i class="fa-solid fa-gear text-indigo-600 mr-2"></i> スプレッドシート連携設定
+                </h3>
+                <button id="btn-close-settings" class="text-slate-400 hover:text-slate-600 text-lg p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="space-y-1.5">
+                <label class="block text-xs font-bold text-slate-700">GAS (Google Apps Script) Webアプリ URL</label>
+                <input type="url" id="gas-url-input" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 font-mono">
+                <p class="text-[11px] text-slate-500">URLを入力すると、読み取り結果がスプレッドシートへ自動送信されます。</p>
+            </div>
+
+            <!-- GAS Setup Instructions Accordion -->
+            <div class="border border-indigo-100 bg-indigo-50/50 rounded-2xl p-4 text-xs space-y-3">
+                <h4 class="font-bold text-indigo-900 flex items-center justify-between cursor-pointer" id="toggle-gas-guide">
+                    <span><i class="fa-solid fa-circle-question text-indigo-600 mr-1.5"></i> GASスクリプトの作成・設定手順</span>
+                    <i class="fa-solid fa-chevron-down text-indigo-400 transition-transform" id="gas-guide-arrow"></i>
+                </h4>
+                
+                <div id="gas-guide-content" class="space-y-2.5 text-slate-600 pt-2 border-t border-indigo-100 hidden">
+                    <ol class="list-decimal list-inside space-y-1.5 text-[11px] leading-relaxed">
+                        <li>Googleスプレッドシートを新規作成します。</li>
+                        <li>メニューの <b>[拡張機能] &gt; [Apps Script]</b> を開きます。</li>
+                        <li>コードエディタに以下を貼り付けて保存します：</li>
+                    </ol>
+
+                    <div class="relative">
+                        <pre id="gas-script-code" class="bg-slate-900 text-slate-100 p-3 rounded-xl text-[10px] font-mono overflow-x-auto leading-relaxed border border-slate-800 select-all">function doPost(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var data = JSON.parse(e.postData.contents);
+    sheet.appendRow([
+      data.timestamp || new Date().toLocaleString("ja-JP"),
+      data.userId || "",
+      data.type || ""
+    ]);
+    return ContentService.createTextOutput(JSON.stringify({ result: "success" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({ result: "error", error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}</pre>
+                        <button id="btn-copy-gas" class="absolute top-2 right-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-2.5 py-1 rounded-md font-sans shadow">
+                            <i class="fa-solid fa-copy mr-1"></i>コピー
+                        </button>
+                    </div>
+
+                    <ol start="4" class="list-decimal list-inside space-y-1.5 text-[11px] leading-relaxed">
+                        <li><b>[デプロイ] &gt; [新しいデプロイ]</b> をクリック。</li>
+                        <li>種類で <b>「ウェブアプリ」</b> を選択。</li>
+                        <li>アクセスできるユーザーを <b>「全員 (Anyone)」</b> に指定してデプロイ。</li>
+                        <li>発行された <b>ウェブアプリURL</b> を上記入力欄に貼り付けます。</li>
+                    </ol>
+                </div>
+            </div>
+
+            <button id="btn-save-settings" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition text-xs shadow-md active:scale-95">
+                設定を保存
+            </button>
+        </div>
+    </div>
+
+    <!-- Web Deploy Guide Modal -->
+    <div id="modal-deploy-guide" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b pb-3">
+                <h3 class="font-bold text-slate-800 text-base flex items-center">
+                    <i class="fa-solid fa-cloud-arrow-up text-indigo-600 mr-2"></i> Webサイトとしての公開手順
+                </h3>
+                <button id="btn-close-deploy" class="text-slate-400 hover:text-slate-600 text-lg p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-600 leading-relaxed">
+                このファイル1つ（<code class="bg-slate-100 text-indigo-600 px-1 py-0.5 rounded font-mono">index.html</code>）をGitHub PagesやNetlify等の無料ホスティングにアップロードすると、スマホのSafariやChromeからアクセス可能になります。
+            </p>
+
+            <div class="space-y-3">
+                <div class="border border-slate-200 rounded-2xl p-3.5 bg-slate-50">
+                    <h4 class="font-bold text-xs text-slate-800 flex items-center mb-1.5">
+                        <i class="fa-brands fa-github text-slate-700 mr-2 text-sm"></i> GitHub Pages (無料・HTTPS対応)
+                    </h4>
+                    <ol class="list-decimal list-inside text-[11px] text-slate-600 space-y-1">
+                        <li>GitHubでリポジトリを作成。</li>
+                        <li>このコードを <code class="bg-white border px-1 rounded">index.html</code> でコミット。</li>
+                        <li>Settings &gt; Pages の Source を <code class="bg-white border px-1 rounded">main</code> に設定して保存。</li>
+                    </ol>
+                </div>
+            </div>
+
+            <button id="btn-understand-deploy" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition text-xs">
+                閉じる
+            </button>
+        </div>
+    </div>
+
+    <!-- Manual Entry Modal -->
+    <div id="modal-manual" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between border-b pb-2">
+                <h3 class="font-bold text-slate-800 text-sm">手動入力記録</h3>
+                <button id="btn-close-manual" class="text-slate-400 hover:text-slate-600 text-lg p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">お名前 または ユーザーID</label>
+                <input type="text" id="manual-user-id" placeholder="例: 山田太郎 / EMP001" class="w-full border border-slate-300 rounded-xl p-3 text-sm focus:outline-none focus:border-indigo-500">
+            </div>
+            <button id="btn-submit-manual" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 transition text-sm shadow-md">
+                送信する
+            </button>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl shadow-xl text-white text-xs font-semibold flex items-center space-x-2 transition-all duration-300 opacity-0 pointer-events-none translate-y-4">
+        <i id="toast-icon" class="fa-solid fa-circle-check text-base"></i>
+        <span id="toast-message">メッセージ</span>
+    </div>
+
+    <script>
+        // State management
+        let currentMode = 'IN';
+        let mediaStream = null;
+        let isScanning = false;
+        let animationFrameId = null;
+        let lastScannedCode = '';
+        let lastScanTime = 0;
+        let gasUrl = localStorage.getItem('qr_gas_url') || '';
+
+        // Hidden off-screen canvas for frame extraction
+        const canvasElement = document.createElement('canvas');
+        const canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
+
+        // DOM elements
+        const videoElement = document.getElementById('webcam');
+        const modeInBtn = document.getElementById('mode-in');
+        const modeOutBtn = document.getElementById('mode-out');
+        const btnToggleCamera = document.getElementById('btn-toggle-camera');
+        const cameraPlaceholder = document.getElementById('camera-placeholder');
+        const scannerGuide = document.getElementById('scanner-guide');
+        const cameraStatus = document.getElementById('camera-status');
+        const settingsDot = document.getElementById('settings-dot');
+        const headerStatusBadge = document.getElementById('header-status-badge');
+
+        const modalSettings = document.getElementById('modal-settings');
+        const btnOpenSettings = document.getElementById('btn-open-settings');
+        const btnCloseSettings = document.getElementById('btn-close-settings');
+        const btnSaveSettings = document.getElementById('btn-save-settings');
+        const gasUrlInput = document.getElementById('gas-url-input');
+
+        const modalDeployGuide = document.getElementById('modal-deploy-guide');
+        const btnOpenDeployGuide = document.getElementById('btn-open-deploy-guide');
+        const btnCloseDeploy = document.getElementById('btn-close-deploy');
+        const btnUnderstandDeploy = document.getElementById('btn-understand-deploy');
+
+        const modalManual = document.getElementById('modal-manual');
+        const btnManualEntry = document.getElementById('btn-manual-entry');
+        const btnCloseManual = document.getElementById('btn-close-manual');
+        const btnSubmitManual = document.getElementById('btn-submit-manual');
+        const manualUserId = document.getElementById('manual-user-id');
+        const qrFileInput = document.getElementById('qr-file-input');
+
+        const lastRecordCard = document.getElementById('last-record-card');
+        const lastRecordTime = document.getElementById('last-record-time');
+        const lastRecordBadge = document.getElementById('last-record-badge');
+        const lastRecordUser = document.getElementById('last-record-user');
+
+        // Web Audio API Sound Generator
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playBeepSound() {
+            try {
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+                osc.frequency.setValueAtTime(1760, audioCtx.currentTime + 0.08); // A6
+                
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.25);
+            } catch (e) {
+                console.log('Audio error:', e);
+            }
+        }
+
+        // Mode Switching
+        modeInBtn.addEventListener('click', () => setMode('IN'));
+        modeOutBtn.addEventListener('click', () => setMode('OUT'));
+
+        function setMode(mode) {
+            currentMode = mode;
+            if (mode === 'IN') {
+                modeInBtn.className = "flex-1 py-3.5 rounded-xl transition duration-200 flex items-center justify-center space-x-2 bg-emerald-600 text-white shadow-md active:scale-95";
+                modeOutBtn.className = "flex-1 py-3.5 rounded-xl transition duration-200 flex items-center justify-center space-x-2 text-slate-600 hover:text-slate-800 active:scale-95";
+            } else {
+                modeInBtn.className = "flex-1 py-3.5 rounded-xl transition duration-200 flex items-center justify-center space-x-2 text-slate-600 hover:text-slate-800 active:scale-95";
+                modeOutBtn.className = "flex-1 py-3.5 rounded-xl transition duration-200 flex items-center justify-center space-x-2 bg-rose-600 text-white shadow-md active:scale-95";
+            }
+        }
+
+        // Camera Initialization specifically tuned for iOS
+        btnToggleCamera.addEventListener('click', toggleCamera);
+
+        function toggleCamera() {
+            if (isScanning) {
+                stopCamera();
+            } else {
+                startCamera();
+            }
+        }
+
+        async function startCamera() {
+            const constraintsOptions = [
+                { video: { facingMode: { exact: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+                { video: { facingMode: "environment" } },
+                { video: true }
+            ];
+
+            let stream = null;
+            for (let constraints of constraintsOptions) {
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    if (stream) break;
+                } catch (e) {
+                    console.warn("Retrying with fallback constraints...", e);
+                }
+            }
+
+            if (!stream) {
+                showToast("カメラを起動できませんでした。ブラウザのカメラ権限を確認してください。", false);
+                return;
+            }
+
+            mediaStream = stream;
+            videoElement.srcObject = stream;
+            videoElement.setAttribute("playsinline", "true");
+            videoElement.setAttribute("webkit-playsinline", "true");
+            videoElement.muted = true;
+
+            videoElement.onloadedmetadata = () => {
+                videoElement.play();
+                videoElement.classList.remove('hidden');
+                cameraPlaceholder.classList.add('hidden');
+                scannerGuide.classList.remove('hidden');
+                
+                isScanning = true;
+                cameraStatus.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse mr-2"></span> スキャン中`;
+                btnToggleCamera.innerHTML = `<i class="fa-solid fa-stop"></i><span>カメラ停止</span>`;
+                btnToggleCamera.className = "bg-slate-700 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-xl transition active:scale-95 shadow-md text-xs flex items-center justify-center mx-auto space-x-2 z-20 absolute bottom-4";
+
+                // Start continuous frame scan loop
+                requestAnimationFrame(tickScan);
+            };
+        }
+
+        function stopCamera() {
+            isScanning = false;
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+
+            videoElement.classList.add('hidden');
+            cameraPlaceholder.classList.remove('hidden');
+            scannerGuide.classList.add('hidden');
+            cameraStatus.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-slate-300 mr-2"></span> カメラ停止中`;
+            btnToggleCamera.innerHTML = `<i class="fa-solid fa-play"></i><span>カメラ起動</span>`;
+            btnToggleCamera.className = "bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl transition active:scale-95 shadow-lg shadow-indigo-500/30 text-xs flex items-center justify-center mx-auto space-x-2";
+        }
+
+        // Frame rendering and decoding loop using jsQR
+        function tickScan() {
+            if (!isScanning) return;
+
+            if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
+                canvasElement.height = videoElement.videoHeight;
+                canvasElement.width = videoElement.videoWidth;
+                canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+
+                const imageData = canvasCtx.getImageData(0, 0, canvasElement.width, canvasElement.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                    inversionAttempts: "dontInvert",
+                });
+
+                if (code && code.data) {
+                    onScanSuccess(code.data);
+                }
+            }
+
+            if (isScanning) {
+                animationFrameId = requestAnimationFrame(tickScan);
+            }
+        }
+
+        function onScanSuccess(decodedText) {
+            const now = Date.now();
+            if (decodedText === lastScannedCode && (now - lastScanTime) < 3000) {
+                return; // 3 seconds cooldown
+            }
+
+            lastScannedCode = decodedText;
+            lastScanTime = now;
+
+            if (navigator.vibrate) navigator.vibrate(80);
+            playBeepSound();
+
+            processEntry(decodedText);
+        }
+
+        // Image file picker fallback
+        qrFileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    canvasElement.width = img.width;
+                    canvasElement.height = img.height;
+                    canvasCtx.drawImage(img, 0, 0);
+                    const imageData = canvasCtx.getImageData(0, 0, canvasElement.width, canvasElement.height);
+                    const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+                    if (code && code.data) {
+                        onScanSuccess(code.data);
+                    } else {
+                        showToast("画像からQRコードを読み取れませんでした", false);
+                    }
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Submit Process logic
+        function processEntry(userId) {
+            const now = new Date();
+            const timestamp = now.toLocaleString('ja-JP', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+
+            const typeStr = currentMode === 'IN' ? '入室' : '退室';
+
+            const payload = {
+                timestamp: timestamp,
+                userId: userId,
+                type: typeStr
+            };
+
+            lastRecordCard.classList.remove('hidden');
+            lastRecordTime.innerText = now.toLocaleTimeString('ja-JP');
+            lastRecordUser.innerText = userId;
+            lastRecordBadge.innerText = typeStr;
+            lastRecordBadge.className = currentMode === 'IN' 
+                ? "px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-800"
+                : "px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-100 text-rose-800";
+
+            if (gasUrl) {
+                sendToGAS(payload);
+            } else {
+                showToast(`【${typeStr}】${userId} (テスト記録)`, true);
+            }
+        }
+
+        function sendToGAS(data) {
+            showToast('スプレッドシートへ送信中...', true);
+
+            fetch(gasUrl, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(() => {
+                showToast(`【${data.type}】${data.userId} を送信しました！`, true);
+            })
+            .catch(err => {
+                console.error('GAS Error:', err);
+                showToast('スプレッドシート送信エラー', false);
+            });
+        }
+
+        // Settings / Modal controls
+        btnOpenSettings.addEventListener('click', () => {
+            gasUrlInput.value = gasUrl;
+            modalSettings.classList.remove('hidden');
+        });
+
+        btnCloseSettings.addEventListener('click', () => modalSettings.classList.add('hidden'));
+
+        btnSaveSettings.addEventListener('click', () => {
+            gasUrl = gasUrlInput.value.trim();
+            localStorage.setItem('qr_gas_url', gasUrl);
+            updateConfigState();
+            modalSettings.classList.add('hidden');
+            showToast('設定を保存しました', true);
+        });
+
+        btnOpenDeployGuide.addEventListener('click', () => modalDeployGuide.classList.remove('hidden'));
+        btnCloseDeploy.addEventListener('click', () => modalDeployGuide.classList.add('hidden'));
+        btnUnderstandDeploy.addEventListener('click', () => modalDeployGuide.classList.add('hidden'));
+
+        btnManualEntry.addEventListener('click', () => {
+            manualUserId.value = '';
+            modalManual.classList.remove('hidden');
+        });
+
+        btnCloseManual.addEventListener('click', () => modalManual.classList.add('hidden'));
+
+        btnSubmitManual.addEventListener('click', () => {
+            const uid = manualUserId.value.trim();
+            if (!uid) {
+                showToast('名前またはIDを入力してください', false);
+                return;
+            }
+            processEntry(uid);
+            modalManual.classList.add('hidden');
+        });
+
+        // GAS Accordion Guide
+        document.getElementById('toggle-gas-guide').addEventListener('click', () => {
+            document.getElementById('gas-guide-content').classList.toggle('hidden');
+            document.getElementById('gas-guide-arrow').classList.toggle('rotate-180');
+        });
+
+        document.getElementById('btn-copy-gas').addEventListener('click', () => {
+            const code = document.getElementById('gas-script-code').innerText;
+            const textarea = document.createElement('textarea');
+            textarea.value = code;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            showToast('スクリプトをコピーしました！', true);
+        });
+
+        function updateConfigState() {
+            if (gasUrl) {
+                settingsDot.classList.add('hidden');
+                headerStatusBadge.innerText = "スプレッドシート連携中";
+                headerStatusBadge.className = "text-[10px] text-emerald-300 font-medium";
+            } else {
+                settingsDot.classList.remove('hidden');
+                headerStatusBadge.innerText = "GAS未連携 (テストモード)";
+                headerStatusBadge.className = "text-[10px] text-amber-200 font-medium";
+            }
+        }
+
+        function showToast(msg, isSuccess = true) {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toast-message');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastMsg.innerText = msg;
+            if (isSuccess) {
+                toast.className = "fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl shadow-xl text-white text-xs font-semibold flex items-center space-x-2 transition-all duration-300 bg-slate-900/90 backdrop-blur-md border border-emerald-500/50 opacity-100 translate-y-0";
+                toastIcon.className = "fa-solid fa-circle-check text-emerald-400 text-base";
+            } else {
+                toast.className = "fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl shadow-xl text-white text-xs font-semibold flex items-center space-x-2 transition-all duration-300 bg-slate-900/90 backdrop-blur-md border border-rose-500/50 opacity-100 translate-y-0";
+                toastIcon.className = "fa-solid fa-triangle-exclamation text-rose-400 text-base";
+            }
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-4');
+                toast.classList.remove('opacity-100', 'translate-y-0');
+            }, 3000);
+        }
+
+        window.onload = function() {
+            updateConfigState();
+        };
+    </script>
+</body>
+</html>
